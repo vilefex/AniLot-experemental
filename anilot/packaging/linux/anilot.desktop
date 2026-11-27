@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=AniLot
+Comment=Неофициальный клиент Anixart
+Exec=anilot
+Icon=anilot
+Categories=AudioVideo;Video;Network;
+Terminal=false
+StartupWMClass=anilot

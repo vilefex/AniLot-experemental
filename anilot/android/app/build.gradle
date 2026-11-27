@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.aateam.anilot'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'org.aateam.AniLot'
+        minSdk 26
+        targetSdk 36
+        versionCode (System.getenv('ANILOT_BUILD') ?: '10').toInteger()
+        versionName (System.getenv('ANILOT_VERSION') ?: '10.0.0')
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // APK подписывается отладочным ключом, чтобы устанавливаться без собственного keystore.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    // IcedActivity — Java-половина крейта iced_android; берём исходники оттуда, где Cargo их скачал.
+    sourceSets.main.java.srcDirs += icedAndroidJava()
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+/** Каталог java/ крейта iced_android, от которого зависит Cargo.toml (по данным `cargo metadata`). */
+def icedAndroidJava() {
+    def metadata = providers.exec {
+        commandLine 'cargo', 'metadata', '--format-version', '1', '--manifest-path', "${rootDir}/../Cargo.toml"
+    }.standardOutput.asText.get()
+    def crate = new groovy.json.JsonSlurper().parseText(metadata).packages.find { it.name == 'iced_android' }
+    if (crate == null) {
+        throw new GradleException('iced_android не найден среди зависимостей Cargo.toml')
+    }
+    return new File(crate.manifest_path).parentFile.toPath().resolve('java').toString()
+}

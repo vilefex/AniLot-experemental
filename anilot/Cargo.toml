@@ -1,0 +1,58 @@
+[package]
+name = "anilot"
+version = "10.0.0"
+edition = "2021"
+description = "AniLot — неофициальный клиент Anixart на Rust + Iced"
+license = "MIT"
+default-run = "anilot"
+
+# cdylib — для Android (загружается IcedActivity), rlib — для десктопного бинарника и iOS.
+[lib]
+name = "anilot"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "anilot"
+path = "src/main.rs"
+
+[dependencies]
+iced = { git = "https://github.com/Santuzius/iced", tag = "iced_android-v0.1.2", default-features = false, features = ["wgpu", "tiny-skia", "crisp", "web-colors", "tokio", "lazy", "image", "svg", "fira-sans", "x11"] }
+iced_android = { git = "https://github.com/Santuzius/iced_android", tag = "v0.1.2", features = ["emoji"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "deflate"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "fs", "io-util", "process", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+log = "0.4"
+base64 = "0.22"
+url = "2"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+iced = { git = "https://github.com/Santuzius/iced", tag = "iced_android-v0.1.2", default-features = false, features = ["wayland", "linux-theme-detection"] }
+dirs = "5"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd"))'.dependencies]
+open = "5"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+jni = "0.21"
+ndk-context = "0.1"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSURL", "NSDictionary"] }
+
+# iced_android нужен форк android-activity.
+[patch.crates-io]
+android-activity = { git = "https://github.com/Santuzius/android-activity", tag = "iced_android-v0.1.2" }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 4
+opt-level = "s"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
