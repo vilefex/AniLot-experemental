@@ -1,0 +1,312 @@
+name: AniLot Build and Release
+
+# Сборки AniLot (Rust + Iced) под все платформы:
+#   Linux   — tar.gz и tar.zst с ELF-бинарником
+#   Windows — .exe
+#   macOS   — .dmg (универсальный arm64 + x86_64, без подписи)
+#   Android — .apk (подписан отладочным ключом)
+#   iOS     — .ipa без подписи (CODE_SIGNING не применяется)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['master', 'main']
+    paths:
+      - 'anilot/**'
+      - '.github/workflows/anilot.yml'
+  pull_request:
+    paths:
+      - 'anilot/**'
+      - '.github/workflows/anilot.yml'
+
+concurrency:
+  group: anilot-build-\${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+defaults:
+  run:
+    working-directory: anilot
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: \${{ steps.v.outputs.version }}
+      build: \${{ steps.v.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=\${VERSION%%.*}" >> "$GITHUB_OUTPUT"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anilot
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libvulkan-dev
+      - name: Unit tests
+        run: cargo test --lib --locked
+
+  linux:
+    needs: [meta, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anilot
+      - name: Prepare app icon
+        run: |
+          mkdir -p assets
+          curl -fsSL https://raw.githubusercontent.com/vilefex/AniLot/master/anilot-icon.png -o assets/icon.png
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libvulkan-dev zstd
+      - name: Build
+        run: cargo build --release --locked --bin anilot
+      - name: Package
+        run: |
+          set -euo pipefail
+          DIR=AniLot-linux-x86_64
+          rm -rf "$DIR" && mkdir -p "$DIR"
+          cp target/release/anilot "$DIR/anilot"
+          cp packaging/linux/anilot.desktop "$DIR/"
+          cp assets/icon.png "$DIR/anilot.png"
+          cat > "$DIR/README.txt" <<'EOF'
+          AniLot — неофициальный клиент Anixart (Rust + Iced).
+          Запуск: ./anilot
+          Для просмотра видео с авто-пропуском OP/ED установите mpv (или VLC).
+          EOF
+          chmod +x "$DIR/anilot"
+          file "$DIR/anilot" | tee /dev/stderr | grep -q "ELF"
+          tar -czf "$DIR.tar.gz" "$DIR"
+          tar --zstd -cf "$DIR.tar.zst" "$DIR"
+          ls -lh "$DIR".tar.*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anilot-linux
+          path: |
+            anilot/AniLot-linux-x86_64.tar.gz
+            anilot/AniLot-linux-x86_64.tar.zst
+
+  windows:
+    needs: [meta, test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anilot
+      - name: Prepare app icon
+        run: |
+          mkdir -p assets
+          curl -fsSL https://raw.githubusercontent.com/vilefex/AniLot/master/anilot-icon.png -o assets/icon.png
+      - name: Generate icon
+        shell: bash
+        run: |
+          python -m pip install pillow
+          python scripts/make_icons.py ico assets/icon.ico
+      - name: Build
+        run: cargo build --release --locked --bin anilot
+      - name: Package
+        shell: bash
+        run: cp target/release/anilot.exe AniLot-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anilot-windows
+          path: anilot/AniLot-windows-x86_64.exe
+
+  macos:
+    needs: [meta, test]
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anilot
+      - name: Prepare app icon
+        run: |
+          mkdir -p assets
+          curl -fsSL https://raw.githubusercontent.com/vilefex/AniLot/master/anilot-icon.png -o assets/icon.png
+      - name: Build (arm64 + x86_64)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          cargo build --release --locked --bin anilot --target aarch64-apple-darwin
+          cargo build --release --locked --bin anilot --target x86_64-apple-darwin
+      - name: Create .app and .dmg
+        run: |
+          set -euo pipefail
+          python -m pip install pillow
+          VERSION="\${{ needs.meta.outputs.version }}"
+          BUILD="\${{ needs.meta.outputs.build }}"
+          APP="dist/AniLot.app"
+          rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          lipo -create -output "$APP/Contents/MacOS/AniLot" \
+            target/aarch64-apple-darwin/release/anilot \
+            target/x86_64-apple-darwin/release/anilot
+          chmod +x "$APP/Contents/MacOS/AniLot"
+          sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+          python scripts/make_icons.py macos dist/AniLot.iconset
+          iconutil -c icns dist/AniLot.iconset -o "$APP/Contents/Resources/AniLot.icns"
+          rm -rf dist/AniLot.iconset
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dist/dmg && cp -R "$APP" dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "AniLot" -srcfolder dist/dmg -ov -format UDZO AniLot-macos-universal.dmg
+          ls -lh AniLot-macos-universal.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anilot-macos
+          path: anilot/AniLot-macos-universal.dmg
+
+  android:
+    needs: [meta, test]
+    runs-on: ubuntu-latest
+    env:
+      ANILOT_BUILD: \${{ needs.meta.outputs.build }}
+      ANILOT_VERSION: \${{ needs.meta.outputs.version }}
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anilot
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;\${NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=\${ANDROID_HOME}/ndk/\${NDK_VERSION}" >> "$GITHUB_ENV"
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Prepare app icon
+        run: |
+          mkdir -p assets
+          curl -fsSL https://raw.githubusercontent.com/vilefex/AniLot/master/anilot-icon.png -o assets/icon.png
+      - name: Generate launcher icons
+        run: |
+          python -m pip install pillow
+          python scripts/make_icons.py android android/app/src/main/res
+      - name: Build native libraries
+        run: |
+          rm -rf android/app/src/main/jniLibs
+          cargo ndk --platform 26 -t arm64-v8a -t armeabi-v7a -t x86_64 \
+            -o android/app/src/main/jniLibs build --lib --release --locked
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Assemble APK
+        working-directory: anilot/android
+        run: gradle --no-daemon assembleRelease
+      - name: Package
+        run: cp android/app/build/outputs/apk/release/app-release.apk AniLot-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anilot-android
+          path: anilot/AniLot-android.apk
+
+  ios:
+    needs: [meta, test]
+    runs-on: macos-26-intel
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anilot
+      - name: Prepare app icon
+        run: |
+          mkdir -p assets
+          curl -fsSL https://raw.githubusercontent.com/vilefex/AniLot/master/anilot-icon.png -o assets/icon.png
+      - name: Build
+        run: cargo build --release --locked --bin anilot --target aarch64-apple-ios
+      - name: Create unsigned IPA
+        run: |
+          set -euo pipefail
+          python -m pip install pillow
+          VERSION="\${{ needs.meta.outputs.version }}"
+          BUILD="\${{ needs.meta.outputs.build }}"
+          APP="build/Payload/AniLot.app"
+          rm -rf build && mkdir -p "$APP"
+          cp target/aarch64-apple-ios/release/anilot "$APP/AniLot"
+          chmod +x "$APP/AniLot"
+          sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" packaging/ios/Info.plist > "$APP/Info.plist"
+          plutil -lint "$APP/Info.plist"
+          python scripts/make_icons.py ios "$APP"
+          printf 'APPL????' > "$APP/PkgInfo"
+          (cd build && zip -qry ../AniLot.ipa Payload)
+          unzip -l AniLot.ipa | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anilot-ios
+          path: anilot/AniLot.ipa
+
+  release:
+    needs: [meta, linux, windows, macos, android, ios]
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - run: ls -lhR artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: anilot-\${{ needs.meta.outputs.build }}
+          name: AniLot v\${{ needs.meta.outputs.build }}
+          target_commitish: \${{ github.sha }}
+          make_latest: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/AniLot-linux-x86_64.tar.gz
+            artifacts/AniLot-linux-x86_64.tar.zst
+            artifacts/AniLot-windows-x86_64.exe
+            artifacts/AniLot-macos-universal.dmg
+            artifacts/AniLot-android.apk
+            artifacts/AniLot.ipa
