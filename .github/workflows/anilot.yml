@@ -20,7 +20,7 @@ on:
       - '.github/workflows/anilot.yml'
 
 concurrency:
-  group: anilot-build-\${{ github.ref }}
+  group: anilot-build-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -38,8 +38,8 @@ jobs:
   meta:
     runs-on: ubuntu-latest
     outputs:
-      version: \${{ steps.v.outputs.version }}
-      build: \${{ steps.v.outputs.build }}
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
     steps:
       - uses: actions/checkout@v4
       - id: v
@@ -162,8 +162,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install pillow
-          VERSION="\${{ needs.meta.outputs.version }}"
-          BUILD="\${{ needs.meta.outputs.build }}"
+          VERSION="${{ needs.meta.outputs.version }}"
+          BUILD="${{ needs.meta.outputs.build }}"
           APP="dist/AniLot.app"
           rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           lipo -create -output "$APP/Contents/MacOS/AniLot" \
@@ -188,8 +188,8 @@ jobs:
     needs: [meta, test]
     runs-on: ubuntu-latest
     env:
-      ANILOT_BUILD: \${{ needs.meta.outputs.build }}
-      ANILOT_VERSION: \${{ needs.meta.outputs.version }}
+      ANILOT_BUILD: ${{ needs.meta.outputs.build }}
+      ANILOT_VERSION: ${{ needs.meta.outputs.version }}
       NDK_VERSION: 27.2.12479018
     steps:
       - uses: actions/checkout@v4
@@ -265,8 +265,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install pillow
-          VERSION="\${{ needs.meta.outputs.version }}"
-          BUILD="\${{ needs.meta.outputs.build }}"
+          VERSION="${{ needs.meta.outputs.version }}"
+          BUILD="${{ needs.meta.outputs.build }}"
           APP="build/Payload/AniLot.app"
           rm -rf build && mkdir -p "$APP"
           cp target/aarch64-apple-ios/release/anilot "$APP/AniLot"
@@ -297,9 +297,9 @@ jobs:
       - run: ls -lhR artifacts
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: anilot-\${{ needs.meta.outputs.build }}
-          name: AniLot v\${{ needs.meta.outputs.build }}
-          target_commitish: \${{ github.sha }}
+          tag_name: anilot-${{ needs.meta.outputs.build }}
+          name: AniLot v${{ needs.meta.outputs.build }}
+          target_commitish: ${{ github.sha }}
           make_latest: true
           generate_release_notes: true
           fail_on_unmatched_files: true
