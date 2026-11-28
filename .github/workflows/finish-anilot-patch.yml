@@ -1,0 +1,31 @@
+name: Finalize AniLot UI and player patch
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/finish-anilot-patch.yml'
+permissions:
+  contents: write
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply verified patch and commit source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .patch-upload/*.b64 | base64 --decode | xz --decompress --stdout > /tmp/anilot-web-player.patch
+          echo "f6d110779b10a745b716aae6f9711db15b459be4bee55f5e6f0d2a6e04863864  /tmp/anilot-web-player.patch" | sha256sum --check -
+          git apply --check /tmp/anilot-web-player.patch
+          git apply /tmp/anilot-web-player.patch
+          rm -rf .patch-upload
+          rm .github/workflows/apply-anilot-patch.yml
+          rm .github/workflows/finish-anilot-patch.yml
+          git add -A -- . ':!anilot/target' ':!web/node_modules' ':!web/.next'
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Apply AniLot web UI and player refactor"
+          git status --short
+          git push origin HEAD:main
