@@ -6,7 +6,6 @@ on:
       - '.github/workflows/finish-anilot-patch.yml'
 permissions:
   contents: write
-  workflows: write
 jobs:
   finalize:
     runs-on: ubuntu-latest
@@ -24,9 +23,7 @@ jobs:
           git apply --check /tmp/anilot-web-player.patch
           git apply /tmp/anilot-web-player.patch
           rm -rf .patch-upload
-          rm .github/workflows/apply-anilot-patch.yml
-          rm .github/workflows/finish-anilot-patch.yml
-          git add -A -- . ':!anilot/target' ':!web/node_modules' ':!web/.next'
+          git add -A -- . ':!anilot/target' ':!web/node_modules' ':!web/.next' ':!.github/workflows/web.yml' ':!.github/workflows/apply-anilot-patch.yml' ':!.github/workflows/finish-anilot-patch.yml'
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Apply AniLot web UI and player refactor"
           git status --short
           git push origin HEAD:main
