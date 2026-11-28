@@ -6,6 +6,7 @@ on:
       - '.github/workflows/finish-anilot-patch.yml'
 permissions:
   contents: write
+  workflows: write
 jobs:
   finalize:
     runs-on: ubuntu-latest
