@@ -646,8 +646,30 @@ impl Api {
 
     // ───────────── картинки и произвольные запросы ─────────────
 
+    /// Загрузка картинки каскадом: https-апгрейд → прямой запрос → зеркала CDN (альтернативное
+    /// подключение) → прокси-fallback (wsrv.nl / weserv.nl). Первый успешный ответ побеждает.
     pub async fn bytes(&self, url: &str) -> Result<Vec<u8>, String> {
-        let resp = self.client.get(url).send().await.map_err(|e| e.to_string())?;
+        let upgraded = upgrade_https(url);
+        let alt_first = self.base == BASE_ALT;
+        let mut last = String::from("нет адресов для загрузки");
+        for candidate in image_candidates(&upgraded, alt_first) {
+            match self.fetch_bytes(&candidate).await {
+                Ok(b) if !b.is_empty() => return Ok(b),
+                Ok(_) => last = "пустой ответ".to_string(),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
+        let resp = self
+            .client
+            .get(url)
+            .timeout(Duration::from_secs(12))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status().as_u16()));
         }
@@ -681,5 +703,81 @@ pub fn code_text(code: i64) -> String {
         5 => "Доступ запрещён".into(),
         6 => "Профиль заблокирован".into(),
         c => format!("Ошибка API (код {c})"),
+    }
+}
+
+// ───────────── загрузка картинок: https-апгрейд, зеркала, прокси ─────────────
+
+/// Домены CDN, которые взаимозаменяемы (альтернативное подключение).
+const IMAGE_MIRRORS: [&str; 2] = ["anixmirai.com", "anixsekai.com"];
+
+/// `http://` и `//host` → `https://`.
+pub fn upgrade_https(src: &str) -> String {
+    if let Some(rest) = src.strip_prefix("http://") {
+        format!("https://{rest}")
+    } else if let Some(rest) = src.strip_prefix("//") {
+        format!("https://{rest}")
+    } else {
+        src.to_string()
+    }
+}
+
+/// Список адресов для загрузки картинки в порядке попыток.
+pub fn image_candidates(src: &str, alt_first: bool) -> Vec<String> {
+    let mut mirrors: Vec<String> = Vec::new();
+    if let Ok(parsed) = url::Url::parse(src) {
+        if let Some(host) = parsed.host_str() {
+            for d in IMAGE_MIRRORS {
+                if host == d || host.ends_with(&format!(".{d}")) {
+                    for other in IMAGE_MIRRORS {
+                        if other != d {
+                            let new_host = format!("{}{}", &host[..host.len() - d.len()], other);
+                            let mut u = parsed.clone();
+                            if u.set_host(Some(&new_host)).is_ok() {
+                                mirrors.push(u.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let bare = src.trim_start_matches("https://").trim_start_matches("http://");
+    let proxies = vec![
+        format!("https://wsrv.nl/?url={}&output=jpg&q=85", crate::player::enc(bare)),
+        format!("https://images.weserv.nl/?url={}&output=jpg&q=85", crate::player::enc(bare)),
+    ];
+    let mut out: Vec<String> = Vec::new();
+    if alt_first {
+        out.extend(mirrors.iter().cloned());
+    }
+    out.push(src.to_string());
+    if !alt_first {
+        out.extend(mirrors);
+    }
+    out.extend(proxies);
+    out
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_http() {
+        assert_eq!(upgrade_https("http://s.anixmirai.com/a.jpg"), "https://s.anixmirai.com/a.jpg");
+        assert_eq!(upgrade_https("//s.anixmirai.com/a.jpg"), "https://s.anixmirai.com/a.jpg");
+        assert_eq!(upgrade_https("https://x.y/a.jpg"), "https://x.y/a.jpg");
+    }
+
+    #[test]
+    fn candidates_order() {
+        let direct = image_candidates("https://s.anixmirai.com/posters/a.jpg", false);
+        assert_eq!(direct[0], "https://s.anixmirai.com/posters/a.jpg");
+        assert!(direct[1].contains("anixsekai.com"));
+        assert!(direct.last().unwrap().contains("weserv.nl"));
+        let alt = image_candidates("https://s.anixmirai.com/posters/a.jpg", true);
+        assert!(alt[0].contains("anixsekai.com"));
+        assert_eq!(alt[1], "https://s.anixmirai.com/posters/a.jpg");
     }
 }
